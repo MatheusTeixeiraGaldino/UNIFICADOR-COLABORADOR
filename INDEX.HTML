@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>UNIFICADOR COLABORADOR E DEPENDENTE</title>
+    <!-- Biblioteca para exportar para Excel -->
+    <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 20px;
+            background-color: #f4f7f6;
+            color: #333;
+        }
+        .container {
+            max-width: 98%;
+            margin: auto;
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #2c3e50;
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        .controls {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 15px;
+            margin-bottom: 20px;
+            padding: 15px;
+            background: #ecf0f1;
+            border-radius: 8px;
+            align-items: flex-end;
+        }
+        .control-group {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+        label {
+            font-weight: bold;
+            font-size: 13px;
+        }
+        input[type="file"], input[type="month"] {
+            padding: 6px;
+            border: 1px solid #bdc3c7;
+            border-radius: 4px;
+        }
+        .btn {
+            padding: 10px 18px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: opacity 0.3s;
+        }
+        .btn-process { background-color: #27ae60; color: white; }
+        .btn-export { background-color: #2980b9; color: white; display: none; }
+        .btn:hover { opacity: 0.8; }
+        
+        .summary {
+            margin-bottom: 15px;
+            padding: 10px;
+            background-color: #d1ecf1;
+            color: #0c5460;
+            border-radius: 4px;
+            font-size: 14px;
+            font-weight: bold;
+        }
+        .table-wrapper {
+            overflow: auto;
+            max-height: 550px;
+            border: 1px solid #ddd;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            background: white;
+        }
+        th, td {
+            text-align: left;
+            padding: 8px 12px;
+            border-bottom: 1px solid #ddd;
+            font-size: 12px;
+            white-space: nowrap;
+        }
+        th {
+            background-color: #34495e;
+            color: white;
+            position: sticky;
+            top: 0;
+            z-index: 10;
+        }
+        tr:hover {
+            background-color: #f9f9f9;
+        }
+        #loading {
+            display: none;
+            text-align: center;
+            padding: 15px;
+            font-weight: bold;
+            color: #e67e22;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>Gestão de Colaboradores e Beneficiários</h1>
+
+    <div class="controls">
+        <div class="control-group">
+            <label for="fileInput">Importar DEPENDENTES.TXT:</label>
+            <input type="file" id="fileInput" accept=".txt">
+        </div>
+        <div class="control-group">
+            <label for="monthRef">Mês de Referência:</label>
+            <input type="month" id="monthRef">
+        </div>
+        <button class="btn btn-process" onclick="processFile()">Gerar Relatório</button>
+        <button id="exportBtn" class="btn btn-export" onclick="exportToExcel()">Salvar em XLSX</button>
+    </div>
+
+    <div id="loading">Processando dados...</div>
+    <div id="summary" class="summary" style="display:none;"></div>
+    
+    <div class="table-wrapper">
+        <table id="resultTable">
+            <thead id="tableHead"></thead>
+            <tbody id="tableBody"></tbody>
+        </table>
+    </div>
+</div>
+
+<script>
+    const targetOrder = [
+        "CARTEIRA_PLANO", "TITULAR", "NOME", "PARENTESCO", "CHAPA", "CPF", 
+        "CPF_TITULAR", "DESCRICAOSECAO", "FUNCAO", "COLIGADA", "SECAO", 
+        "DTNASCIMENTO", "SEXO", "TELEFONE1", "EMAIL", "IR", "CODFILIAL", 
+        "SITUACAO", "TIPO", "TIPOFUNCIONARIO", "ADMISSAO", "ESTADOCIVIL", 
+        "NRODEPEND", "DTENVIO", "CIDADE", "RG", "EMISSAO_RG", "ORGAO_RG", 
+        "UF_RG", "IDADE", "DEMISSAO", "TELEFONE2"
+    ];
+
+    let processedData = []; 
+
+    function parseDate(dateStr) {
+        if (!dateStr || dateStr.trim() === "") return null;
+        const parts = dateStr.split('/');
+        if (parts.length !== 3) return null;
+        return new Date(parts[2], parts[1] - 1, parts[0]);
+    }
+
+    async function processFile() {
+        const fileInput = document.getElementById('fileInput');
+        const monthRefInput = document.getElementById('monthRef').value;
+        const loading = document.getElementById('loading');
+        const tableHead = document.getElementById('tableHead');
+        const tableBody = document.getElementById('tableBody');
+        const summary = document.getElementById('summary');
+        const exportBtn = document.getElementById('exportBtn');
+
+        if (!fileInput.files[0] || !monthRefInput) {
+            alert('Selecione o arquivo e o mês de referência.');
+            return;
+        }
+
+        loading.style.display = 'block';
+        summary.style.display = 'none';
+        exportBtn.style.display = 'none';
+        tableHead.innerHTML = '';
+        tableBody.innerHTML = '';
+
+        const file = fileInput.files[0];
+        const reader = new FileReader();
+
+        reader.onload = function(e) {
+            const text = e.target.result;
+            const lines = text.split(/\r?\n/).filter(line => line.trim() !== "");
+            
+            if (lines.length < 2) {
+                alert("Arquivo vazio ou sem dados.");
+                loading.style.display = 'none';
+                return;
+            }
+
+            const fileHeaders = lines[0].split('\t').map(h => h.trim().toUpperCase());
+            const headerIndices = {};
+            targetOrder.forEach(header => {
+                headerIndices[header] = fileHeaders.indexOf(header.toUpperCase());
+            });
+
+            let headHtml = '<tr>';
+            targetOrder.forEach(h => headHtml += `<th>${h}</th>`);
+            headHtml += '</tr>';
+            tableHead.innerHTML = headHtml;
+
+            const [refYear, refMonth] = monthRefInput.split('-').map(Number);
+            const endOfRefMonth = new Date(refYear, refMonth, 0);
+
+            const idxCpfTitular = headerIndices["CPF_TITULAR"];
+            const idxAdmissao = headerIndices["ADMISSAO"];
+            const idxTitular = headerIndices["TITULAR"];
+            const idxCarteira = headerIndices["CARTEIRA_PLANO"];
+
+            if (idxCpfTitular === -1 || idxAdmissao === -1) {
+                alert("Colunas CPF_TITULAR ou ADMISSAO não encontradas.");
+                loading.style.display = 'none';
+                return;
+            }
+
+            const dataMap = new Map();
+
+            for (let i = 1; i < lines.length; i++) {
+                const columns = lines[i].split('\t').map(c => c.trim());
+                if (columns.length < fileHeaders.length) continue;
+
+                const cpfTitular = columns[idxCpfTitular];
+                const admissaoDate = parseDate(columns[idxAdmissao]);
+
+                if (cpfTitular && admissaoDate && admissaoDate <= endOfRefMonth) {
+                    const currentGroup = dataMap.get(cpfTitular);
+                    
+                    const orderedRow = targetOrder.map(header => {
+                        const idx = headerIndices[header];
+                        return idx !== -1 ? columns[idx] : "";
+                    });
+
+                    if (!currentGroup || admissaoDate > currentGroup.latestAdmissao) {
+                        dataMap.set(cpfTitular, {
+                            latestAdmissao: admissaoDate,
+                            records: [orderedRow]
+                        });
+                    } else if (admissaoDate.getTime() === currentGroup.latestAdmissao.getTime()) {
+                        currentGroup.records.push(orderedRow);
+                    }
+                }
+            }
+
+            processedData = [];
+            dataMap.forEach(group => processedData.push(...group.records));
+
+            // Ordenar por TITULAR (coluna 1)
+            processedData.sort((a, b) => a[1].localeCompare(b[1]));
+
+            // APLICAR REGRA DE SUFIXO NA CARTEIRA_PLANO
+            // Primeiro, contar ocorrências de cada carteira na lista final
+            const carteiraCounts = {};
+            processedData.forEach(row => {
+                const val = row[0]; // CARTEIRA_PLANO
+                if (val && val !== "") {
+                    carteiraCounts[val] = (carteiraCounts[val] || 0) + 1;
+                }
+            });
+
+            // Segundo, adicionar sufixo apenas para as que têm duplicatas
+            const currentTracker = {};
+            processedData = processedData.map(row => {
+                const val = row[0];
+                if (val && val !== "" && carteiraCounts[val] > 1) {
+                    currentTracker[val] = (currentTracker[val] || 0) + 1;
+                    row[0] = `${val}-${currentTracker[val]}`;
+                }
+                return row;
+            });
+
+            let bodyHtml = '';
+            processedData.forEach(row => {
+                bodyHtml += '<tr>';
+                row.forEach(cell => bodyHtml += `<td>${cell}</td>`);
+                bodyHtml += '</tr>';
+            });
+            tableBody.innerHTML = bodyHtml;
+
+            loading.style.display = 'none';
+            summary.style.display = 'block';
+            summary.innerText = `Sucesso! ${processedData.length} registros processados.`;
+            exportBtn.style.display = 'inline-block';
+        };
+
+        reader.readAsText(file, 'ISO-8859-1');
+    }
+
+    function exportToExcel() {
+        if (processedData.length === 0) return;
+
+        const worksheetData = processedData.map(row => {
+            let obj = {};
+            targetOrder.forEach((header, index) => {
+                obj[header] = row[index];
+            });
+            return obj;
+        });
+
+        const worksheet = XLSX.utils.json_to_sheet(worksheetData, { header: targetOrder });
+        const workbook = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(workbook, worksheet, "Relatorio");
+
+        const date = new Date().toISOString().slice(0,10);
+        XLSX.writeFile(workbook, `Relatorio_Colaboradores_${date}.xlsx`);
+    }
+</script>
+
+</body>
+</html>
